@@ -18,8 +18,8 @@ structured, source-attributed result.
 ## Installation
 
 ```bash
-git clone <repository-url>
-cd mcp-project  # the repository folder name; the installed package is company_investigator
+git clone git@github.com:CalebePrates/company-investigator-mcp.git
+cd company-investigator-mcp
 uv sync
 ```
 
@@ -72,7 +72,7 @@ Register the server in `.mcp.json` at your project root:
   "mcpServers": {
     "company-investigator": {
       "command": "wsl.exe",
-      "args": ["-e", "bash", "-lc", "cd /path/to/mcp-project && uv run company-investigator"]
+      "args": ["-e", "bash", "-lc", "cd /path/to/company-investigator-mcp && uv run company-investigator"]
     }
   }
 }
@@ -80,9 +80,9 @@ Register the server in `.mcp.json` at your project root:
 
 (This example targets Windows+WSL, matching how this project is developed. On
 Linux/macOS, drop the `wsl.exe`/`bash -lc` wrapper and run
-`cd /path/to/mcp-project && uv run company-investigator` directly as the `command`.
-`/path/to/mcp-project` is just the folder you cloned into — the package inside it
-is `company_investigator`.)
+`cd /path/to/company-investigator-mcp && uv run company-investigator` directly as
+the `command`. `/path/to/company-investigator-mcp` is just the folder you cloned
+into — the installed Python package inside it is `company_investigator`.)
 Reload Claude Code after editing `.mcp.json` or changing environment variables the
 server reads.
 

@@ -9,10 +9,12 @@ societária, notícias, redes sociais, processos judiciais públicos e PEP.
 (`src/company_investigator/`), nome em `pyproject.toml` (`company-investigator`,
 normalizado pelo `uv_build` para `company_investigator` por convenção, sem precisar de
 `[tool.uv.build-backend] module-name`), comando CLI (`uv run company-investigator`) e a
-chave do servidor em `.mcp.json` (`company-investigator`) usam todos o novo nome. A
-única coisa que **não** foi renomeada é a pasta raiz do repositório no disco
-(`.../pessoal/mcp-project/`) — isso é o nome da pasta clonada localmente, não algo
-pedido no rename, e trocá-lo exigiria mover o próprio diretório do projeto.
+chave do servidor em `.mcp.json` (`company-investigator`) usam todos o novo nome. O
+repositório GitHub também já existe com o nome novo:
+[`CalebePrates/company-investigator-mcp`](https://github.com/CalebePrates/company-investigator-mcp).
+A única coisa que **não** foi renomeada é a pasta de desenvolvimento local dentro do
+WSL (`.../pessoal/mcp-project/`) — é só o nome da pasta neste ambiente específico;
+alguém clonando o repositório do zero já recebe a pasta `company-investigator-mcp/`.
 
 Sem persistência: não há banco de dados, cache persistente ou histórico neste
 projeto (decisão explícita — ver "Fontes externas" abaixo para como cada tool lida

@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local secrets (this project does not auto-load .env; see .env.example)
+.env

@@ -1,6 +1,6 @@
 import pytest
 
-from mcp_project.interface.mcp_server.server import build_server
+from company_investigator.interface.mcp_server.server import build_server
 
 
 @pytest.mark.asyncio

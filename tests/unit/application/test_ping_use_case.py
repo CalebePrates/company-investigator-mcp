@@ -1,6 +1,6 @@
-from mcp_project.application.use_cases.ping_use_case import PingUseCase
-from mcp_project.domain.entities.health_status import HealthStatus
-from mcp_project.domain.ports.health_checker import HealthCheckerPort
+from company_investigator.application.use_cases.ping_use_case import PingUseCase
+from company_investigator.domain.entities.health_status import HealthStatus
+from company_investigator.domain.ports.health_checker import HealthCheckerPort
 
 
 class FakeHealthChecker(HealthCheckerPort):

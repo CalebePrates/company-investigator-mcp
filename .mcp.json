@@ -1,12 +1,12 @@
 {
   "mcpServers": {
-    "mcp-project": {
+    "company-investigator": {
       "command": "wsl.exe",
       "args": [
         "-e",
         "bash",
         "-lc",
-        "cd /home/elton/pessoal/mcp-project && uv run mcp-project"
+        "cd /home/elton/pessoal/mcp-project && uv run company-investigator"
       ]
     }
   }

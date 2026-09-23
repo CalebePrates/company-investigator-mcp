@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from mcp_project.domain.entities.health_status import HealthStatus
+from company_investigator.domain.entities.health_status import HealthStatus
 
 
 def test_to_dict_returns_status_and_message() -> None:

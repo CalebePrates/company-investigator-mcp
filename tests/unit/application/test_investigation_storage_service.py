@@ -4,6 +4,7 @@ import pytest
 
 from company_investigator.application.exceptions import InvestigationNotFoundError
 from company_investigator.application.services.investigation_storage_service import (
+    SECTION_NAMES,
     InvestigationStorageService,
 )
 from company_investigator.domain.entities.company import Company
@@ -11,10 +12,14 @@ from company_investigator.domain.entities.investigation import (
     ConfidenceLevel,
     ConsultaProcessual,
     ConsultaProcessualStatus,
+    DadosOficiaisProcesso,
     EmpresaInvestigada,
     EmpresaRelacionada,
     LinkedInResultado,
+    Movimento,
     Noticia,
+    ProcessoConfirmado,
+    ReferenciaProcessual,
 )
 from company_investigator.domain.entities.socio import Socio
 from company_investigator.infrastructure.investigation.in_memory_investigation_store import (
@@ -261,3 +266,159 @@ def test_object_sections_are_returned_as_a_single_item_page() -> None:
     assert pagina.total_paginas == 1
     assert len(pagina.itens) == 1
     assert pagina.itens[0].cnpj == "11444777000161"
+
+
+def test_service_keeps_no_state_of_its_own_a_second_service_sees_the_same_tree() -> None:
+    store = InMemoryInvestigationStore()
+    indice = InvestigationStorageService(store=store).store(_investigacao_com_relacionada())
+
+    outro_servico = InvestigationStorageService(store=store)
+    relacionadas = outro_servico.get_section(indice.investigation_id, "empresas_relacionadas")
+
+    assert [r.empresa.cnpj for r in relacionadas.itens] == ["11222333000181"]
+    assert outro_servico.get_index(relacionadas.itens[0].investigation_id).empresa is not None
+
+
+def test_evicting_a_tree_makes_root_and_children_equally_not_found() -> None:
+    service = InvestigationStorageService(store=InMemoryInvestigationStore(max_entries=2))
+    raiz = service.store(_investigacao_com_relacionada())
+    filho_id = (
+        service.get_section(raiz.investigation_id, "empresas_relacionadas")
+        .itens[0]
+        .investigation_id
+    )
+
+    service.store(_investigacao_simples(cnpj="11555666000122"))  # empurra a arvore antiga
+
+    with pytest.raises(InvestigationNotFoundError):
+        service.get_index(raiz.investigation_id)
+    with pytest.raises(InvestigationNotFoundError):
+        service.get_index(filho_id)
+
+
+def _processo_com_movimentos(numero: str, total: int) -> ProcessoConfirmado:
+    dados = DadosOficiaisProcesso(
+        numero_processo=numero,
+        tribunal="TJSP",
+        grau="G1",
+        orgao_julgador=None,
+        classe="Procedimento Comum Civel",
+        assuntos=["Rescisao"],
+        movimentos=[
+            Movimento(nome=f"Movimento {i}", data="2020-05-20T10:00:00Z") for i in range(total)
+        ],
+        data_ajuizamento=None,
+        sistema="PJe",
+        fonte="DataJud (CNJ)",
+        consultado_em=datetime.now(UTC),
+    )
+    origem = ReferenciaProcessual(
+        titulo="ref",
+        url=f"https://ref.exemplo/{numero}",
+        fonte="serper",
+        resumo="...",
+        consultado_em=datetime.now(UTC),
+        relacionado_a="Empresa A",
+        tipo_relacionado="empresa",
+        numero_processo_detectado=numero,
+    )
+    return ProcessoConfirmado(
+        dados=dados,
+        relacionado_a="Empresa A",
+        tipo_relacionado="empresa",
+        confianca=ConfidenceLevel.BAIXA,
+        origem=origem,
+    )
+
+
+def _investigacao_com_processos(processos: list[ProcessoConfirmado]) -> EmpresaInvestigada:
+    base = _investigacao_simples()
+    return EmpresaInvestigada(
+        identificador_usado=base.identificador_usado,
+        empresa=base.empresa,
+        candidatos=[],
+        socios=[],
+        pessoas_chave=[],
+        linkedin=base.linkedin,
+        redes_sociais=[],
+        noticias=[],
+        contatos=[],
+        processos=ConsultaProcessual(
+            confirmados=processos,
+            referencias=[],
+            status=ConsultaProcessualStatus(status="realizada"),
+        ),
+        fontes=[],
+    )
+
+
+def test_process_movements_are_a_flat_paginated_section_that_loses_nothing() -> None:
+    service = _service()
+    processos = [
+        _processo_com_movimentos("00000000000000000001", 1200),
+        _processo_com_movimentos("00000000000000000002", 3),
+    ]
+    indice = service.store(_investigacao_com_processos(processos))
+
+    resumo = next(s for s in indice.secoes if s.nome == "movimentos_processuais")
+    assert resumo.total_itens == 1203
+
+    coletados: list = []
+    pagina_num = 1
+    while True:
+        pagina = service.get_section(
+            indice.investigation_id, "movimentos_processuais", pagina_num, tamanho_pagina=50
+        )
+        assert len(pagina.itens) <= 50
+        coletados.extend(pagina.itens)
+        if pagina_num >= pagina.total_paginas:
+            break
+        pagina_num += 1
+
+    assert len(coletados) == 1203
+    assert [m.numero_processo for m in coletados[:1200]] == ["00000000000000000001"] * 1200
+    assert [m.numero_processo for m in coletados[1200:]] == ["00000000000000000002"] * 3
+    assert coletados[0].nome == "Movimento 0"
+    assert coletados[0].data == "2020-05-20T10:00:00Z"
+
+
+def test_section_names_are_the_single_source_of_truth_for_the_index_and_get_section() -> None:
+    service = _service()
+    indice = service.store(_investigacao_com_relacionada())
+
+    for nome in SECTION_NAMES:
+        assert service.get_section(indice.investigation_id, nome).secao == nome
+    # toda secao anunciada no indice e aceita por get_section
+    assert {s.nome for s in indice.secoes} <= set(SECTION_NAMES)
+    # (processos_status e um objeto pequeno que ja vem inteiro no indice)
+    assert set(SECTION_NAMES) - {s.nome for s in indice.secoes} == {"empresa", "processos_status"}
+
+
+def test_page_beyond_the_last_returns_empty_items_but_correct_totals() -> None:
+    service = _service()
+    indice = service.store(_investigacao_simples(noticias=45))
+
+    pagina = service.get_section(indice.investigation_id, "noticias", pagina=99, tamanho_pagina=20)
+
+    assert pagina.itens == []
+    assert pagina.total_itens == 45
+    assert pagina.total_paginas == 3
+
+
+def test_empty_section_is_one_empty_page() -> None:
+    service = _service()
+    indice = service.store(_investigacao_simples(noticias=0))
+
+    pagina = service.get_section(indice.investigation_id, "noticias")
+
+    assert pagina.itens == []
+    assert pagina.total_itens == 0
+    assert pagina.total_paginas == 1
+
+
+def test_unknown_section_error_lists_the_valid_sections() -> None:
+    service = _service()
+    indice = service.store(_investigacao_simples())
+
+    with pytest.raises(ValueError, match="Secoes validas:.*noticias.*movimentos_processuais"):
+        service.get_section(indice.investigation_id, "Noticias")

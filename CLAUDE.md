@@ -18,7 +18,30 @@ alguém clonando o repositório do zero já recebe a pasta `company-investigator
 
 Sem persistência: não há banco de dados, cache persistente ou histórico neste
 projeto (decisão explícita — ver "Fontes externas" abaixo para como cada tool lida
-com a ausência de configuração em vez de guardar estado).
+com a ausência de configuração em vez de guardar estado). A única exceção é um
+armazenamento **em memória, só pelo tempo de vida do processo do servidor**, que
+guarda o resultado de uma investigação para ser lido em partes (ver "Exposição em
+partes" abaixo) — nada é gravado em disco.
+
+## Papel do MCP vs. papel do agente cliente
+
+Decisão de arquitetura (definitiva): **a análise fica com o cliente**, não com este
+servidor.
+
+```
+MCP Client / AI Agent → Company Investigator MCP → investigação e dados estruturados
+                      → MCP Client / AI Agent → análise
+```
+
+- **Este MCP** coleta informação pública, investiga empresas, descobre sócios,
+  pessoas e empresas relacionadas, busca notícias/LinkedIn/redes sociais, consulta
+  processos e PEP, preserva evidências/fontes/URLs/datas/confiança e disponibiliza
+  tudo de forma estruturada, permitindo que o agente leia investigações grandes sem
+  estourar o contexto.
+- **O agente** (Claude, Qwen local etc.) decide quais tools usar, o que aprofundar,
+  cruza as evidências, interpreta e produz a análise final.
+- **Não existe** (e não deve ser criado) LLM interno, `LLMProvider`,
+  `LLMAnalysisService` nem tool `analisar_empresa` neste projeto.
 
 ## Stack
 
@@ -64,7 +87,7 @@ src/company_investigator/
 │   ├── value_objects/    # Cnpj (normalização + validação de dígitos verificadores)
 │   └── ports/            # abstrações (ABCs): HealthCheckerPort, CompanyRepositoryPort,
 │                          # BrowserPort, SearchProviderPort, ProcessNumberLookupPort,
-│                          # PEPLookupPort
+│                          # PEPLookupPort, InvestigationStorePort
 ├── application/
 │   ├── use_cases/        # PingUseCase, BuscarEmpresaUseCase,
 │   │                      # BuscarInformacoesPublicasUseCase, InvestigarEmpresaUseCase
@@ -73,20 +96,26 @@ src/company_investigator/
 │                          # PartnerSearchService, NewsSearchService,
 │                          # SocialMediaSearchService, LinkedInSearchService,
 │                          # ProcessSearchService, RelatedCompaniesService,
-│                          # RelatedPeopleService, FamilyRelationshipService, PEPService
+│                          # RelatedPeopleService, FamilyRelationshipService, PEPService;
+│                          # e InvestigationStorageService (guarda a investigação e a
+│                          # entrega em índice + seções paginadas)
 ├── infrastructure/       # implementações concretas dos ports:
 │   ├── health/            # SimpleHealthChecker
 │   ├── company/http/      # BrasilApiCompanyRepository (BrasilAPI, CNPJ público)
 │   ├── browser/           # PlaywrightBrowser + html_page_parser (bs4/lxml)
 │   ├── search/            # SerperSearchAdapter + UnconfiguredSearchProvider
 │   ├── process/           # DataJudProcessAdapter (API Pública do DataJud/CNJ)
-│   └── pep/               # PortalTransparenciaPEPAdapter (API de Dados da CGU)
+│   ├── pep/               # PortalTransparenciaPEPAdapter (API de Dados da CGU)
+│   └── investigation/     # InMemoryInvestigationStore (memória do processo, limitada)
 └── interface/
     └── mcp_server/
         ├── server.py      # composition root: monta o MCPServer e injeta dependências
-        └── tools/         # cada tool MCP é um adapter fino: valida entrada (Pydantic),
-                            # chama um use case, formata a saída (Pydantic) — nenhuma
-                            # regra de negócio mora aqui
+        ├── tools/         # cada tool MCP é um adapter fino: valida entrada (Pydantic),
+        │                   # chama um use case/service, formata a saída (Pydantic) —
+        │                   # nenhuma regra de negócio mora aqui. Inclui
+        │                   # investigation_retrieval_tool.py e os modelos de saída
+        │                   # compartilhados em _investigation_output_models.py
+        └── resources/     # investigation_resource.py (MCP Resource investigation://…)
 ```
 
 ### Como os princípios SOLID aparecem aqui
@@ -109,7 +138,7 @@ src/company_investigator/
   implementação concreta. A composição real acontece só no composition root
   (`interface/mcp_server/server.py`), incluindo os overrides opcionais usados pelos
   testes de integração (`company_repository=`, `browser=`, `search_provider=`,
-  `process_number_lookup=`, `pep_lookup=`).
+  `process_number_lookup=`, `pep_lookup=`, `investigation_store=`).
 
 Ao adicionar uma nova feature, siga o mesmo padrão: entidade/valor em `domain`,
 port se houver uma dependência externa, orquestração em `application` (use case ou
@@ -135,7 +164,10 @@ Convenções de teste:
   adapter real contra respostas simuladas.
 - `tests/integration/` — testam a composição real (`build_server()` + chamada da tool MCP
   via `MCPServer.call_tool`), injetando fakes pelos parâmetros opcionais de `build_server()`
-  para nunca depender de rede, navegador ou cota de API paga.
+  para nunca depender de rede, navegador ou cota de API paga. Exceção deliberada:
+  `test_stdio_external_client.py` sobe o servidor real como processo filho e fala com ele
+  por stdio com o cliente oficial do SDK (o mesmo caminho do `.mcp.json`), usando só
+  caminhos que não tocam a rede.
 - Testes assíncronos usam `pytest-asyncio` (modo `auto`, configurado em `pyproject.toml`
   — não é necessário decorar com `@pytest.mark.asyncio`, mas os testes atuais o fazem
   explicitamente por clareza).
@@ -165,7 +197,57 @@ BeautifulSoup/lxml. Fluxo: `buscar_informacoes_publicas_tool.py` →
 ### `investigar_empresa(identificador, profundidade=1)`
 
 A tool mais complexa do projeto: recebe um CNPJ ou nome de empresa e monta um dossiê
-público combinando várias fontes. Ver a seção dedicada abaixo.
+público combinando várias fontes. **Não devolve o dossiê inteiro**: devolve um
+`investigation_id` + um índice pequeno (empresa, status de processos, contagem de itens
+por seção); o conteúdo completo é lido com as tools abaixo. Ver as seções dedicadas.
+
+### `obter_secao_investigacao(investigation_id, secao, pagina=1, tamanho_pagina=20)`
+
+Devolve uma página (máx. 50 itens) de uma seção da investigação. Percorrendo todas as
+páginas (`total_paginas`) de todas as seções listadas no índice, chega-se a 100% do que
+foi coletado. Erros claros (`ToolError`) para id inexistente/expirado, seção inválida
+(a mensagem lista as válidas) e paginação fora do intervalo.
+Fluxo: `investigation_retrieval_tool.py` → `InvestigationStorageService` →
+`InvestigationStorePort` → `InMemoryInvestigationStore`.
+
+### `obter_indice_investigacao(investigation_id)`
+
+Reconsulta o índice de uma investigação (ou de uma sub-investigação, usando o
+`investigation_id` de um item de `empresas_relacionadas`).
+
+### Resource `investigation://{investigation_id}/{secao}{?pagina,tamanho_pagina}`
+
+Mesmo conteúdo das duas tools, como MCP Resource (`index` devolve o índice). Existe
+para clientes que preferem Resources; as tools existem porque muitos clientes só
+conectam `tools/list`+`tools/call` — daí a exposição dupla, sem lógica duplicada (ambos
+chamam o mesmo `InvestigationStorageService`).
+
+## Exposição em partes (por que `investigar_empresa` devolve um índice)
+
+Uma investigação real com rede societária chegou a ~103.000 caracteres numa única
+resposta e estourou o limite de tokens do cliente. Regras que resolvem isso sem perder
+dado nenhum:
+
+- **Coleta e exposição são separadas.** `InvestigarEmpresaUseCase` continua produzindo
+  a `EmpresaInvestigada` completa; só a camada de interface a entrega em partes.
+- **Grafo em vez de árvore aninhada.** Cada empresa relacionada é uma investigação
+  própria, guardada com seu `investigation_id`. O item de `empresas_relacionadas`
+  carrega o resumo da relação + esse id, nunca a sub-investigação embutida. Percorra
+  recursivamente pelo id.
+- **Nenhum item de lista viaja no índice** — só contagens. Nada é truncado (`[:N]`).
+- **Movimentos processuais** (podem ser milhares por processo) ficam na seção própria
+  `movimentos_processuais` (item = `numero_processo` + nome + data);
+  `processos_confirmados[].dados` traz só `total_movimentos`. Não há duplicação.
+- **Rastreabilidade preservada:** cada item mantém fonte, URL, `consultado_em`,
+  confiança e origem/relacionamento — os modelos de saída são os mesmos de antes.
+- **Armazenamento** (`InMemoryInvestigationStore`): memória do processo, limitada a 500
+  registros, sem disco. O descarte é sempre de uma **árvore inteira** (a raiz menos
+  recentemente usada com todas as suas sub-investigações; ler qualquer nó conta como
+  usar a árvore; a árvore recém-guardada nunca é descartada). Um id descartado ou de
+  outra sessão responde com erro claro — basta chamar `investigar_empresa` de novo.
+  Reiniciar o servidor apaga tudo (por desenho: sem persistência).
+- Seções válidas: `SECTION_NAMES` em `investigation_storage_service.py` é a fonte única
+  (descrição das tools e testes derivam dela).
 
 ## Investigação de empresa (`investigar_empresa`)
 
@@ -194,7 +276,10 @@ público combinando várias fontes. Ver a seção dedicada abaixo.
    Expande até `profundidade` níveis (padrão 1, máximo 2), reutilizando recursivamente o
    próprio `InvestigarEmpresaUseCase._investigate` para cada empresa relacionada. Um
    conjunto `visited` (CNPJs) é propagado por toda a recursão para nunca repetir uma
-   empresa nem entrar em ciclo. Empresa compartilhada por dois sócios aparece **uma vez**
+   empresa nem entrar em ciclo — todas as empresas irmãs encontradas num nível são
+   reservadas em `visited` **antes** de recursar em qualquer uma (senão a sub-árvore de
+   uma irmã investigaria outra irmã, que apareceria de novo depois; a ligação entre as
+   duas continua registrada como `Relacionamento`). Empresa compartilhada por dois sócios aparece **uma vez**
    em `empresas_relacionadas`, com uma aresta `Relacionamento` por sócio.
 5. **Possíveis relações familiares** (`FamilyRelationshipService`): sobrenome em comum
    (comparando todos os tokens do nome, não só o último — nomes brasileiros empilham

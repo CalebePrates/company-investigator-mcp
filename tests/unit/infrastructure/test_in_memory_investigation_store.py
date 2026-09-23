@@ -81,3 +81,56 @@ def test_bounded_capacity_evicts_the_oldest_entry() -> None:
     assert store.get(id_1) is None
     assert store.get(id_2) is not None
     assert store.get(id_3) is not None
+
+
+def test_related_ids_are_stored_and_returned_with_the_investigation() -> None:
+    store = InMemoryInvestigationStore()
+    child_id = store.save(_investigacao("child"))
+
+    parent_id = store.save(_investigacao("parent"), related_ids=[child_id])
+
+    assert store.get_related_ids(parent_id) == [child_id]
+    assert store.get_related_ids(child_id) == []
+
+
+def test_get_related_ids_is_empty_for_an_unknown_id() -> None:
+    store = InMemoryInvestigationStore()
+
+    assert store.get_related_ids("does-not-exist") == []
+
+
+def test_eviction_removes_a_whole_tree_never_a_single_node() -> None:
+    store = InMemoryInvestigationStore(max_entries=3)
+    child_id = store.save(_investigacao("child"))
+    parent_id = store.save(_investigacao("parent"), related_ids=[child_id])
+    alone_id = store.save(_investigacao("alone"))
+
+    newest_id = store.save(_investigacao("newest"))  # 4 entries > 3: oldest TREE goes
+
+    assert store.get(parent_id) is None
+    assert store.get(child_id) is None
+    assert store.get(alone_id) is not None
+    assert store.get(newest_id) is not None
+
+
+def test_reading_any_node_protects_its_whole_tree_from_eviction() -> None:
+    store = InMemoryInvestigationStore(max_entries=3)
+    child_id = store.save(_investigacao("child"))
+    parent_id = store.save(_investigacao("parent"), related_ids=[child_id])
+    alone_id = store.save(_investigacao("alone"))
+
+    store.get(child_id)  # the tree of `parent` is now the most recently used
+    store.save(_investigacao("newest"))
+
+    assert store.get(alone_id) is None
+    assert store.get(parent_id) is not None
+    assert store.get(child_id) is not None
+
+
+def test_the_tree_just_saved_is_never_evicted_even_if_it_alone_exceeds_capacity() -> None:
+    store = InMemoryInvestigationStore(max_entries=1)
+    child_id = store.save(_investigacao("child"))
+    parent_id = store.save(_investigacao("parent"), related_ids=[child_id])
+
+    assert store.get(parent_id) is not None
+    assert store.get(child_id) is not None

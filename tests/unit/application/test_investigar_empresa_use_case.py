@@ -351,3 +351,63 @@ async def test_related_companies_failure_is_recorded_without_failing_investigati
 
     assert resultado.empresas_relacionadas == []
     assert any("empresas relacionadas" in nota.lower() for nota in resultado.limitacoes)
+
+
+def _todos_os_cnpjs(investigacao) -> list[str]:
+    cnpjs = [investigacao.empresa.cnpj]
+    for relacionada in investigacao.empresas_relacionadas:
+        cnpjs.extend(_todos_os_cnpjs(relacionada.investigacao))
+    return cnpjs
+
+
+@pytest.mark.asyncio
+async def test_sibling_companies_never_reappear_inside_each_others_subtrees() -> None:
+    # A -> {B, C} (via Socio A); B, por sua vez, tambem acha C (via Socio B).
+    # C deve aparecer UMA vez na arvore inteira, nunca sob B e de novo sob A.
+    empresa_b = Company(
+        cnpj="11222333000181",
+        razao_social="Empresa B LTDA",
+        nome_fantasia="Empresa B",
+        situacao="ATIVA",
+        socios=[Socio(nome="Socio B", qualificacao="Socio")],
+    )
+    empresa_c = Company(
+        cnpj="11555666000122",
+        razao_social="Empresa C LTDA",
+        nome_fantasia="Empresa C",
+        situacao="ATIVA",
+        socios=[],
+    )
+
+    def _achada(empresa: Company, socio: str) -> EmpresaRelacionadaEncontrada:
+        return EmpresaRelacionadaEncontrada(
+            empresa=empresa,
+            origem_socio=socio,
+            participacao="atual",
+            fonte="serper",
+            confianca=ConfidenceLevel.MEDIA,
+        )
+
+    related = FakeRelatedCompaniesService(
+        {
+            "Socio A": [_achada(empresa_b, "Socio A"), _achada(empresa_c, "Socio A")],
+            "Socio B": [_achada(empresa_c, "Socio B")],
+        }
+    )
+    use_case = _use_case(_EMPRESA_A, related_companies=related)
+
+    resultado = await use_case.execute("11.444.777/0001-61", depth=2)
+
+    cnpjs = _todos_os_cnpjs(resultado)
+    assert sorted(cnpjs) == sorted(set(cnpjs)), f"empresa repetida na arvore: {cnpjs}"
+    assert set(cnpjs) == {"11444777000161", "11222333000181", "11555666000122"}
+    # a ligacao B -> C nao se perde: continua registrada como aresta em B
+    investigacao_b = next(
+        r.investigacao for r in resultado.empresas_relacionadas if r.empresa == empresa_b
+    )
+    assert any(
+        e.origem == "Socio B"
+        and e.destino == "Empresa C LTDA"
+        and e.tipo_relacionamento == "socio_de"
+        for e in investigacao_b.relacionamentos
+    )

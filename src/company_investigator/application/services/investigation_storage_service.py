@@ -14,6 +14,30 @@ from company_investigator.domain.ports.investigation_store import InvestigationS
 _DEFAULT_PAGE_SIZE = 20
 _MAX_PAGE_SIZE = 50
 
+# Fonte unica dos nomes de secao aceitos por get_section (a descricao das tools
+# MCP e os testes de consistencia derivam daqui).
+SECTION_NAMES = (
+    "empresa",
+    "candidatos",
+    "socios",
+    "pessoas_chave",
+    "linkedin",
+    "redes_sociais",
+    "noticias",
+    "contatos",
+    "processos_confirmados",
+    "processos_referencias",
+    "processos_status",
+    "movimentos_processuais",
+    "fontes",
+    "empresas_relacionadas",
+    "pessoas_relacionadas",
+    "relacionamentos",
+    "possiveis_relacoes_familiares",
+    "peps",
+    "limitacoes",
+)
+
 
 @dataclass(frozen=True)
 class SecaoResumo:
@@ -53,6 +77,19 @@ class EmpresaRelacionadaResumo:
 
 
 @dataclass(frozen=True)
+class MovimentoProcessual:
+    """Um movimento de um processo confirmado, achatado para a secao
+    'movimentos_processuais'. Um processo antigo pode ter milhares de movimentos:
+    em vez de embuti-los no item do processo (o que poderia estourar o limite de
+    uma resposta), cada movimento e um item proprio, paginavel, que aponta de volta
+    ao seu processo pelo numero."""
+
+    numero_processo: str
+    nome: str
+    data: str | None
+
+
+@dataclass(frozen=True)
 class PaginaSecao:
     secao: str
     pagina: int
@@ -71,7 +108,6 @@ class InvestigationStorageService:
 
     def __init__(self, store: InvestigationStorePort) -> None:
         self._store = store
-        self._related_summaries: dict[str, list[EmpresaRelacionadaResumo]] = {}
 
     def store(self, investigation: EmpresaInvestigada) -> IndiceInvestigacao:
         investigation_id = self._store_recursively(investigation)
@@ -91,13 +127,17 @@ class InvestigationStorageService:
         tamanho_pagina = max(1, min(tamanho_pagina, _MAX_PAGE_SIZE))
         pagina = max(1, pagina)
 
-        if secao == "empresas_relacionadas":
-            investigation = self._require(investigation_id)
-            itens = self._related_summaries.get(investigation_id, [])
-            return _paginate(secao, itens, pagina, tamanho_pagina)
-
         investigation = self._require(investigation_id)
 
+        if secao == "empresas_relacionadas":
+            return _paginate(
+                secao,
+                self._related_summaries(investigation_id, investigation),
+                pagina,
+                tamanho_pagina,
+            )
+        if secao == "movimentos_processuais":
+            return _paginate(secao, _movimentos(investigation), pagina, tamanho_pagina)
         if secao == "empresa":
             return _paginate(
                 secao,
@@ -118,7 +158,9 @@ class InvestigationStorageService:
         if campo is not None:
             return _paginate(secao, campo(investigation), pagina, tamanho_pagina)
 
-        raise ValueError(f"Secao desconhecida: {secao!r}")
+        raise ValueError(
+            f"Secao desconhecida: {secao!r}. Secoes validas: {', '.join(SECTION_NAMES)}."
+        )
 
     def _require(self, investigation_id: str) -> EmpresaInvestigada:
         investigation = self._store.get(investigation_id)
@@ -129,28 +171,33 @@ class InvestigationStorageService:
         return investigation
 
     def _store_recursively(self, investigation: EmpresaInvestigada) -> str:
-        resumos: list[EmpresaRelacionadaResumo] = []
-        for relacionada in investigation.empresas_relacionadas:
-            child_id = self._store_recursively(relacionada.investigacao)
-            resumos.append(
-                EmpresaRelacionadaResumo(
-                    empresa=relacionada.empresa,
-                    origem_socio=relacionada.origem_socio,
-                    participacao=relacionada.participacao,
-                    fonte=relacionada.fonte,
-                    confianca=relacionada.confianca,
-                    investigation_id=child_id,
-                )
-            )
+        child_ids = [
+            self._store_recursively(relacionada.investigacao)
+            for relacionada in investigation.empresas_relacionadas
+        ]
+        return self._store.save(investigation, related_ids=child_ids)
 
-        investigation_id = self._store.save(investigation)
-        self._related_summaries[investigation_id] = resumos
-        return investigation_id
+    def _related_summaries(
+        self, investigation_id: str, investigation: EmpresaInvestigada
+    ) -> list[EmpresaRelacionadaResumo]:
+        child_ids = self._store.get_related_ids(investigation_id)
+        return [
+            EmpresaRelacionadaResumo(
+                empresa=relacionada.empresa,
+                origem_socio=relacionada.origem_socio,
+                participacao=relacionada.participacao,
+                fonte=relacionada.fonte,
+                confianca=relacionada.confianca,
+                investigation_id=child_id,
+            )
+            for relacionada, child_id in zip(
+                investigation.empresas_relacionadas, child_ids, strict=True
+            )
+        ]
 
     def _build_index(
         self, investigation_id: str, investigation: EmpresaInvestigada
     ) -> IndiceInvestigacao:
-        relacionadas_count = len(self._related_summaries.get(investigation_id, []))
         secoes = [
             SecaoResumo("candidatos", "lista", len(investigation.candidatos)),
             SecaoResumo("socios", "lista", len(investigation.socios)),
@@ -161,8 +208,9 @@ class InvestigationStorageService:
             SecaoResumo("contatos", "lista", len(investigation.contatos)),
             SecaoResumo("processos_confirmados", "lista", len(investigation.processos.confirmados)),
             SecaoResumo("processos_referencias", "lista", len(investigation.processos.referencias)),
+            SecaoResumo("movimentos_processuais", "lista", len(_movimentos(investigation))),
             SecaoResumo("fontes", "lista", len(investigation.fontes)),
-            SecaoResumo("empresas_relacionadas", "lista", relacionadas_count),
+            SecaoResumo("empresas_relacionadas", "lista", len(investigation.empresas_relacionadas)),
             SecaoResumo("pessoas_relacionadas", "lista", len(investigation.pessoas_relacionadas)),
             SecaoResumo("relacionamentos", "lista", len(investigation.relacionamentos)),
             SecaoResumo(
@@ -196,6 +244,16 @@ _LIST_FIELDS: dict[str, Any] = {
     "peps": lambda inv: inv.peps,
     "limitacoes": lambda inv: inv.limitacoes,
 }
+
+
+def _movimentos(investigation: EmpresaInvestigada) -> list[MovimentoProcessual]:
+    return [
+        MovimentoProcessual(
+            numero_processo=processo.dados.numero_processo, nome=movimento.nome, data=movimento.data
+        )
+        for processo in investigation.processos.confirmados
+        for movimento in processo.dados.movimentos
+    ]
 
 
 def _paginate(secao: str, itens: list[Any], pagina: int, tamanho_pagina: int) -> PaginaSecao:

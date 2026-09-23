@@ -1,10 +1,11 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from company_investigator.domain.entities.company import Company
-from company_investigator.domain.entities.investigation import DadosOficiaisProcesso
+from company_investigator.domain.entities.investigation import DadosOficiaisProcesso, Movimento
 from company_investigator.domain.entities.search_result import SearchResult
 from company_investigator.domain.entities.socio import Socio
 from company_investigator.domain.ports.company_repository import CompanyRepositoryPort
@@ -16,6 +17,9 @@ from company_investigator.infrastructure.search.unconfigured_search_provider imp
     UnconfiguredSearchProvider,
 )
 from company_investigator.interface.mcp_server.server import build_server
+
+# limite conservador para uma unica resposta de Tool (bem abaixo do que clientes MCP aceitam)
+_LIMITE_RESPOSTA_CHARS = 60_000
 
 _EMPRESA_EXEMPLO = Company(
     cnpj="11444777000161",
@@ -459,3 +463,76 @@ async def test_ping_buscar_empresa_and_buscar_informacoes_publicas_keep_working(
         "buscar_informacoes_publicas", {"url": "https://example.com/"}
     )
     assert pagina_result.is_error is False
+
+
+@pytest.mark.asyncio
+async def test_process_with_thousands_of_movements_never_produces_a_giant_response() -> None:
+    resultado_busca = [
+        SearchResult(
+            title="Empresa Exemplo - processo 0001234-56.2020.8.26.0100",
+            url="https://noticia.exemplo/1",
+            snippet="processo judicial envolvendo Empresa Exemplo",
+            source="serper",
+        )
+    ]
+    dados_oficiais = DadosOficiaisProcesso(
+        numero_processo="00012345620208260100",
+        tribunal="TJSP",
+        grau="G1",
+        orgao_julgador="1a Vara Civel",
+        classe="Procedimento Comum Civel",
+        assuntos=["Rescisao"],
+        movimentos=[
+            Movimento(nome=f"Movimento processual numero {i}", data="2020-05-20T10:00:00Z")
+            for i in range(1200)
+        ],
+        data_ajuizamento="2020-05-20T10:00:00Z",
+        sistema="PJe",
+        fonte="DataJud (CNJ)",
+        consultado_em=datetime.now(UTC),
+    )
+    server = build_server(
+        company_repository=FakeCompanyRepository({"11444777000161": _EMPRESA_EXEMPLO}),
+        search_provider=FakeSearchProvider(resultado_busca),
+        process_number_lookup=FakeProcessNumberLookup(
+            {"0001234-56.2020.8.26.0100": dados_oficiais}
+        ),
+    )
+    indice = (
+        await server.call_tool("investigar_empresa", {"identificador": "11.444.777/0001-61"})
+    ).structured_content
+    investigation_id = indice["investigation_id"]
+
+    movimentos_resumo = next(s for s in indice["secoes"] if s["nome"] == "movimentos_processuais")
+    assert movimentos_resumo["total_itens"] == 1200
+
+    processos = await _secao(server, investigation_id, "processos_confirmados")
+    dados = processos["itens"][0]["dados"]
+    assert dados["total_movimentos"] == 1200
+    assert "movimentos" not in dados
+    assert len(json.dumps(processos)) < _LIMITE_RESPOSTA_CHARS
+
+    coletados: list[dict] = []
+    pagina_num = 1
+    while True:
+        pagina = await _secao(
+            server,
+            investigation_id,
+            "movimentos_processuais",
+            pagina=pagina_num,
+            tamanho_pagina=50,
+        )
+        assert len(json.dumps(pagina)) < _LIMITE_RESPOSTA_CHARS
+        coletados.extend(pagina["itens"])
+        if pagina_num >= pagina["total_paginas"]:
+            break
+        pagina_num += 1
+
+    assert len(coletados) == 1200
+    assert {m["numero_processo"] for m in coletados} == {"00012345620208260100"}
+    assert coletados[0] == {
+        "numero_processo": "00012345620208260100",
+        "nome": "Movimento processual numero 0",
+        "data": "2020-05-20T10:00:00Z",
+    }
+    assert coletados[-1]["nome"] == "Movimento processual numero 1199"

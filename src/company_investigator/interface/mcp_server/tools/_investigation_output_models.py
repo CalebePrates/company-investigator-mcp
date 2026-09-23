@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from company_investigator.application.services.investigation_storage_service import (
     EmpresaRelacionadaResumo,
     IndiceInvestigacao,
+    MovimentoProcessual,
     PaginaSecao,
     SecaoResumo,
 )
@@ -129,11 +130,6 @@ class PessoaChaveOutput(BaseModel):
         )
 
 
-class MovimentoOutput(BaseModel):
-    nome: str
-    data: str | None
-
-
 class ReferenciaProcessualOutput(BaseModel):
     titulo: str
     url: str
@@ -160,14 +156,33 @@ class ReferenciaProcessualOutput(BaseModel):
         )
 
 
+class MovimentoProcessualOutput(BaseModel):
+    """Um movimento de um processo confirmado, como item da secao
+    'movimentos_processuais' (ligado ao seu processo por `numero_processo`)."""
+
+    numero_processo: str
+    nome: str
+    data: str | None
+
+    @classmethod
+    def from_entity(cls, movimento: MovimentoProcessual) -> MovimentoProcessualOutput:
+        return cls(
+            numero_processo=movimento.numero_processo, nome=movimento.nome, data=movimento.data
+        )
+
+
 class DadosOficiaisProcessoOutput(BaseModel):
+    """Os movimentos NAO vem embutidos aqui (um processo antigo pode ter milhares):
+    `total_movimentos` diz quantos existem, e cada um esta na secao paginada
+    'movimentos_processuais', filtravel por `numero_processo`."""
+
     numero_processo: str
     tribunal: str
     grau: str | None
     orgao_julgador: str | None
     classe: str | None
     assuntos: list[str]
-    movimentos: list[MovimentoOutput]
+    total_movimentos: int
     data_ajuizamento: str | None
     sistema: str | None
     fonte: str
@@ -182,7 +197,7 @@ class DadosOficiaisProcessoOutput(BaseModel):
             orgao_julgador=dados.orgao_julgador,
             classe=dados.classe,
             assuntos=dados.assuntos,
-            movimentos=[MovimentoOutput(nome=m.nome, data=m.data) for m in dados.movimentos],
+            total_movimentos=len(dados.movimentos),
             data_ajuizamento=dados.data_ajuizamento,
             sistema=dados.sistema,
             fonte=dados.fonte,
@@ -402,6 +417,7 @@ _ITEM_SERIALIZERS = {
     "noticias": NoticiaOutput,
     "processos_confirmados": ProcessoConfirmadoOutput,
     "processos_referencias": ReferenciaProcessualOutput,
+    "movimentos_processuais": MovimentoProcessualOutput,
     "processos_status": ConsultaProcessualStatusOutput,
     "empresas_relacionadas": EmpresaRelacionadaResumoOutput,
     "pessoas_relacionadas": PessoaRelacionadaOutput,

@@ -9,5 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
 # Local secrets (this project does not auto-load .env; see .env.example)
 .env

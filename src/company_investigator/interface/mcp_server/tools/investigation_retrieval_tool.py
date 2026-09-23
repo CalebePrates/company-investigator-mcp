@@ -4,6 +4,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from company_investigator.application.exceptions import InvestigationNotFoundError
 from company_investigator.application.services.investigation_storage_service import (
+    SECTION_NAMES,
     InvestigationStorageService,
 )
 from company_investigator.interface.mcp_server.tools._investigation_output_models import (
@@ -11,12 +12,7 @@ from company_investigator.interface.mcp_server.tools._investigation_output_model
     PaginaSecaoOutput,
 )
 
-_SECOES_DISPONIVEIS = (
-    "empresa, candidatos, socios, pessoas_chave, linkedin, redes_sociais, noticias, "
-    "contatos, processos_confirmados, processos_referencias, processos_status, "
-    "fontes, empresas_relacionadas, pessoas_relacionadas, relacionamentos, "
-    "possiveis_relacoes_familiares, peps, limitacoes"
-)
+_SECOES_DISPONIVEIS = ", ".join(SECTION_NAMES)
 
 _SECAO_DESCRIPTION = (
     "Recupera o conteudo completo (paginado) de UMA secao de uma investigacao "
@@ -27,7 +23,9 @@ _SECAO_DESCRIPTION = (
     f"{_SECOES_DISPONIVEIS}. Para a secao 'empresas_relacionadas', cada item traz "
     "seu proprio 'investigation_id' — use-o para percorrer a sub-investigacao "
     "completa daquela empresa relacionada (recursivamente, se ela tambem tiver "
-    "empresas relacionadas). Parametros 'pagina' (padrao 1) e 'tamanho_pagina' "
+    "empresas relacionadas). Os movimentos de cada processo confirmado ficam na "
+    "secao 'movimentos_processuais' (cada item traz o 'numero_processo'), nao "
+    "dentro de 'processos_confirmados'. Parametros 'pagina' (padrao 1) e 'tamanho_pagina' "
     "(padrao 20, maximo 50) controlam a paginacao. Erro se o investigation_id nao "
     "existir (ou tiver expirado da memoria do servidor) ou a secao for invalida."
 )

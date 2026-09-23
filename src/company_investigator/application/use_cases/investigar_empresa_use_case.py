@@ -272,9 +272,13 @@ class InvestigarEmpresaUseCase:
                 continue
             novas_por_cnpj[encontrada.empresa.cnpj] = encontrada
 
+        # Reserva TODAS as irmas antes de recursar: senao a sub-investigacao de uma
+        # irma poderia achar (e investigar) outra irma ainda nao visitada, que
+        # apareceria de novo depois, na lista desta chamada.
+        visited.update(novas_por_cnpj)
+
         empresas_relacionadas: list[EmpresaRelacionada] = []
         for cnpj, encontrada in novas_por_cnpj.items():
-            visited.add(cnpj)
             sub_investigacao = await self._investigate(cnpj, encontrada.empresa, depth - 1, visited)
             empresas_relacionadas.append(
                 EmpresaRelacionada(

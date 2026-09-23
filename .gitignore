@@ -13,5 +13,9 @@ wheels/
 .pytest_cache/
 .ruff_cache/
 
+# npm launcher (npm/)
+node_modules/
+*.tgz
+
 # Local secrets (this project does not auto-load .env; see .env.example)
 .env

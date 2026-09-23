@@ -1,0 +1,37 @@
+{
+  "name": "company-investigator-mcp",
+  "version": "1.0.0",
+  "description": "npx launcher for Company Investigator MCP - runs the Python MCP server (PyPI: company-investigator-mcp) via uvx, pinned to the same version.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "osint",
+    "cnpj",
+    "brazil"
+  ],
+  "homepage": "https://github.com/CalebePrates/company-investigator-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/CalebePrates/company-investigator-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CalebePrates/company-investigator-mcp.git",
+    "directory": "npm"
+  },
+  "license": "MIT",
+  "author": "Calebe Prates <eltoncalebeprates@gmail.com>",
+  "bin": {
+    "company-investigator-mcp": "bin/company-investigator-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "lib/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

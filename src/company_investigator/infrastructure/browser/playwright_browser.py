@@ -8,6 +8,20 @@ from company_investigator.infrastructure.browser.html_page_parser import extract
 
 _DEFAULT_TIMEOUT_MS = 15_000
 
+# O pacote (pip/uvx) nao baixa o Chromium sozinho, de proposito: nada de downloads
+# grandes como efeito colateral da instalacao. O Playwright sinaliza a ausencia do
+# binario com esta frase no erro de `launch`.
+_MISSING_EXECUTABLE_MARKER = "Executable doesn't exist"
+_MISSING_CHROMIUM_MESSAGE = (
+    "O navegador Chromium usado pelo Playwright nao esta instalado, e esta tool precisa "
+    "dele. Instale uma unica vez com o comando correspondente a como voce executa o "
+    "servidor e tente de novo (nao e preciso reiniciar o servidor): "
+    "via uvx/npx: `uvx --from company-investigator-mcp playwright install chromium`; "
+    "via pip (no mesmo ambiente do pacote): `playwright install chromium`; "
+    "a partir do repositorio clonado: `uv run playwright install chromium`. "
+    "No Linux, se faltarem bibliotecas do sistema, acrescente `--with-deps`."
+)
+
 
 class PlaywrightBrowser(BrowserPort):
     """Abre paginas com Playwright (Chromium headless) e extrai titulo/texto com
@@ -29,6 +43,8 @@ class PlaywrightBrowser(BrowserPort):
         except PlaywrightTimeoutError as exc:
             raise BrowserError(f"Tempo limite excedido ao carregar {url}.") from exc
         except PlaywrightError as exc:
+            if _MISSING_EXECUTABLE_MARKER in str(exc):
+                raise BrowserError(_MISSING_CHROMIUM_MESSAGE) from exc
             raise BrowserError(f"Falha ao navegar ate {url}.") from exc
 
         titulo, texto = extract_title_and_text(html)

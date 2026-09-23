@@ -3,10 +3,14 @@
 MCP server for public company intelligence, corporate relationships
 and evidence-based investigation.
 
+[![CI](https://github.com/CalebePrates/company-investigator-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/CalebePrates/company-investigator-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/company-investigator-mcp)](https://pypi.org/project/company-investigator-mcp/)
+[![npm](https://img.shields.io/npm/v/company-investigator-mcp)](https://www.npmjs.com/package/company-investigator-mcp)
 ![Python](https://img.shields.io/badge/python-3.14%2B-blue)
 ![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-6E56CF)
-![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
-![License](https://img.shields.io/badge/license-not%20defined-lightgrey)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/CalebePrates/company-investigator-mcp/blob/main/LICENSE)
+
+## What
 
 An [MCP](https://modelcontextprotocol.io) server that lets an LLM client (Claude,
 or any other MCP-compatible client) look up a Brazilian company by CNPJ or name,
@@ -15,149 +19,215 @@ registry data, corporate relationships, news, social/LinkedIn profiles, public
 judicial proceedings and Politically Exposed Person (PEP) checks — into one
 structured, source-attributed result.
 
-## Installation
-
-```bash
-git clone git@github.com:CalebePrates/company-investigator-mcp.git
-cd company-investigator-mcp
-uv sync
-```
-
-Requires Python 3.14+ and [`uv`](https://docs.astral.sh/uv/). Playwright also needs
-its browser binary installed once:
-
-```bash
-uv run playwright install chromium
-```
-
-## Configuration
-
-`.env.example` lists the variables the server reads. Use it as a checklist for
-the keys you want to set (the real `.env` is git-ignored, so keys never get
-committed):
-
-```dotenv
-# .env.example
-SEARCH_PROVIDER=serper
-SEARCH_API_KEY=
-DATAJUD_API_KEY=
-PORTAL_TRANSPARENCIA_API_KEY=
-```
-
-None of these are required to start the server — `ping` and `buscar_empresa` never
-depend on them. Without a key, the parts of `investigar_empresa` that need it
-(search discovery, official process confirmation, PEP checks) simply return an
-empty result with an explanation instead of failing.
-
-| Variable | Enables | Where to get it |
-|---|---|---|
-| `SEARCH_API_KEY` (+ `SEARCH_PROVIDER=serper`) | News, social profiles, LinkedIn, corporate network discovery | Free tier at [serper.dev](https://serper.dev) — 2,500 queries, no card |
-| `DATAJUD_API_KEY` | Official confirmation of a judicial process by its number (CNJ) | Public shared key published at the [DataJud wiki](https://datajud-wiki.cnj.jus.br/api-publica/acesso/) — no personal signup needed |
-| `PORTAL_TRANSPARENCIA_API_KEY` | Official PEP (Politically Exposed Person) verification | Free email signup at [Portal da Transparência](https://www.portaldatransparencia.gov.br/api-de-dados/cadastrar-email) |
-
-This project does not auto-load `.env` files — export the variables in the shell
-that actually launches the server (e.g. `export SEARCH_API_KEY=...`, or
-`set -a; source .env; set +a` if you keep them in a local `.env`). If that shell is a WSL login shell invoked
-non-interactively (as in the `.mcp.json` example below), put the exports in
-`~/.profile`, not `~/.bashrc` — Ubuntu's default `~/.bashrc` returns early for
-non-interactive shells, so anything exported there is silently ignored.
-
-### Adding it to Claude Code
-
-Register the server in `.mcp.json` at your project root:
-
-```json
-{
-  "mcpServers": {
-    "company-investigator": {
-      "command": "wsl.exe",
-      "args": ["-e", "bash", "-lc", "cd /path/to/company-investigator-mcp && uv run company-investigator"]
-    }
-  }
-}
-```
-
-(This example targets Windows+WSL, matching how this project is developed. On
-Linux/macOS, drop the `wsl.exe`/`bash -lc` wrapper and run
-`cd /path/to/company-investigator-mcp && uv run company-investigator` directly as
-the `command`. `/path/to/company-investigator-mcp` is just the folder you cloned
-into — the installed Python package inside it is `company_investigator`.)
-Reload Claude Code after editing `.mcp.json` or changing environment variables the
-server reads.
-
-## What is Company Investigator MCP?
-
 Looking up a company usually means checking half a dozen disconnected sources by
-hand — a registry lookup, a news search, a LinkedIn search, maybe a court records
-site — and manually piecing together who actually runs it and what else they're
-involved in. This project turns that into one MCP tool call with a single
-underlying idea:
+hand and manually piecing together who runs it and what else they are involved
+in. This server does the collection:
 
 ```text
-Company/CNPJ
-      ↓
-Partners
-      ↓
-Related companies
-      ↓
-Related people
-      ↓
-News / LinkedIn / public profiles
-      ↓
-Public proceedings
-      ↓
-PEP
-      ↓
-Relationship graph
-      ↓
-Structured investigation (read in pages by the client)
+Company/CNPJ → Partners → Related companies → Related people
+  → News / LinkedIn / public profiles → Public proceedings → PEP
+  → Relationship graph → Structured investigation (read in pages by the client)
 ```
 
 The server **collects and structures** the evidence; it does not interpret it.
 Deciding what to dig into, cross-checking sources and writing the final analysis
-is the job of the MCP client / AI agent (Claude, a local Qwen, …):
+is the job of the MCP client / AI agent (Claude, a local Qwen, …). There is
+deliberately no LLM inside this server.
 
 ```text
 MCP Client / AI Agent → Company Investigator MCP → structured investigation
                       → MCP Client / AI Agent → analysis
 ```
 
-There is deliberately no LLM inside this server (see [Roadmap](#roadmap)).
-
 ## Features
 
 - **Company intelligence** — official registry data (CNPJ, razão social, nome
-  fantasia, status, address) via BrasilAPI.
+  fantasia, status) via BrasilAPI.
 - **Corporate relationships** — discovers other companies a partner is
-  associated with, and expands the network to a configurable depth.
+  associated with, and expands the network to a configurable depth (0–2).
 - **People intelligence** — partners, administrators and LinkedIn key people
-  (CEO, founders, directors and other leadership roles) for every company found.
-- **News and public sources** — public mentions of the company via a search
-  provider, each with title, URL, source and confidence.
+  (CEO, founders, directors and other leadership roles).
+- **News and public sources** — public mentions of the company, each with title,
+  URL, source and confidence.
 - **LinkedIn / social profiles** — company page and key people on LinkedIn, plus
   Instagram, Facebook, YouTube, X/Twitter and TikTok.
 - **Public proceedings** — public mentions of judicial processes, with official
-  confirmation by process number where possible (never a direct party search on
-  the official source — see [Sources and Evidence](#sources-and-evidence)).
+  confirmation by process number where possible.
 - **PEP identification** — checks partners against the official Politically
-  Exposed Person registry, distinguishing a confirmed match from a same-name
-  coincidence.
+  Exposed Person registry, distinguishing a confirmed match from a homonym.
 - **Relationship graph** — companies and people connected by typed, sourced
   edges (`socio_de`, `relacionada_por_socio`), without duplicating entities.
-- **Large investigations without blowing the client's context** — the full result
-  is kept in the server's memory and handed over as a small index plus paginated
-  sections (see [Reading a large investigation](#reading-a-large-investigation)).
-  Nothing is truncated: paging through every section returns 100% of what was
-  collected.
+- **Large investigations without blowing the client's context** — the result is
+  handed over as a small index plus paginated sections. Nothing is truncated.
 
-## Example
+## Installation
 
-```text
-Tool: buscar_empresa
-Input: { "cnpj": "19.131.243/0001-97" }
+Pick one; all of them run the same Python server over stdio.
+
+| Method | Command | Requires |
+|---|---|---|
+| **uvx** (recommended) | `uvx company-investigator-mcp` | [uv](https://docs.astral.sh/uv/getting-started/installation/) — downloads Python 3.14 automatically if missing |
+| **npx** | `npx -y company-investigator-mcp` | Node.js 18+ **and** uv |
+| **pip** | `pip install company-investigator-mcp`, then `company-investigator-mcp` | Python 3.14+ |
+
+```bash
+company-investigator-mcp --version   # prints 1.0.0
 ```
 
+The older `company-investigator` command is kept as an alias.
+
+**About the npm package:** it is only a launcher, with no server code. It finds
+`uvx` and runs `uvx company-investigator-mcp@<its own version>`, so npm `1.0.0`
+always runs exactly PyPI `1.0.0` — never `@latest`. Pin it the usual way
+(`npx -y company-investigator-mcp@1.0.0`) to lock a version. If your MCP client
+cannot find `uvx` (desktop apps often start with a minimal `PATH`), the launcher
+also looks in uv's default install directories; you can set `UVX_PATH` to the
+`uvx` executable explicitly.
+
+### Browser (only for `buscar_informacoes_publicas`)
+
+Installing the package does **not** download a browser — no large downloads or
+side effects at install time. The `buscar_informacoes_publicas` tool uses
+browser automation (Playwright) and needs Chromium, installed once:
+
+```bash
+uvx --from company-investigator-mcp playwright install chromium   # uvx / npx users
+playwright install chromium                                       # pip (same environment)
+uv run playwright install chromium                                # from a git clone
+```
+
+On Linux, add `--with-deps` if system libraries are missing. Every other tool
+works without it; if Chromium is missing, this tool returns an error with exactly
+the commands above. No restart is needed after installing.
+
+### From source
+
+```bash
+git clone https://github.com/CalebePrates/company-investigator-mcp.git
+cd company-investigator-mcp
+uv sync
+uv run company-investigator-mcp
+```
+
+## Configuration
+
+No environment variable is required to start the server — `ping`,
+`buscar_empresa` and `buscar_informacoes_publicas` never depend on them. Without a
+key, the parts of `investigar_empresa` that need it (search discovery, official
+process confirmation, PEP checks) return an empty result with an explanation in
+`limitacoes` instead of failing.
+
+| Variable | Enables | Where to get it |
+|---|---|---|
+| `SEARCH_API_KEY` (+ `SEARCH_PROVIDER=serper`) | News, social profiles, LinkedIn, corporate network discovery, name search | Free tier at [serper.dev](https://serper.dev) — 2,500 queries, no card |
+| `DATAJUD_API_KEY` | Official confirmation of a judicial process by its number (CNJ) | Public shared key published at the [DataJud wiki](https://datajud-wiki.cnj.jus.br/api-publica/acesso/) — no personal signup needed |
+| `PORTAL_TRANSPARENCIA_API_KEY` | Official PEP (Politically Exposed Person) verification | Free email signup at [Portal da Transparência](https://www.portaldatransparencia.gov.br/api-de-dados/cadastrar-email) |
+
+[`.env.example`](https://github.com/CalebePrates/company-investigator-mcp/blob/main/.env.example) lists them. The server does not auto-load `.env`
+files: pass the variables through your MCP client's `env` block (below) or export
+them in the shell that launches the server.
+
+## MCP client configuration
+
+### Claude Desktop / generic `mcpServers` JSON
+
+Most clients (Claude Desktop's `claude_desktop_config.json`, Cursor, Windsurf,
+…) accept this shape. With **uvx**:
+
 ```json
+{
+  "mcpServers": {
+    "company-investigator": {
+      "command": "uvx",
+      "args": ["company-investigator-mcp"],
+      "env": {
+        "SEARCH_PROVIDER": "serper",
+        "SEARCH_API_KEY": "your-serper-key",
+        "DATAJUD_API_KEY": "the-public-datajud-key",
+        "PORTAL_TRANSPARENCIA_API_KEY": "your-cgu-key"
+      }
+    }
+  }
+}
+```
+
+With **npx**, replace the command:
+
+```jsonc
+"command": "npx",
+"args": ["-y", "company-investigator-mcp"]
+```
+
+With **pip**, use `"command": "company-investigator-mcp"` (or its absolute path
+inside your virtualenv) and no `args`. All `env` entries are optional.
+
+If the client reports that `uvx` was not found, use its absolute path
+(`which uvx` / `where uvx`) as `command`.
+
+### Claude Code
+
+```bash
+claude mcp add company-investigator \
+  -e SEARCH_PROVIDER=serper -e SEARCH_API_KEY=your-serper-key \
+  -- uvx company-investigator-mcp
+```
+
+or add the JSON above to `.mcp.json` at your project root. Reload/reconnect the
+MCP servers after changing the configuration or the variables.
+
+### Windows + WSL
+
+If the server runs inside WSL while the client runs on Windows:
+
+```json
+{
+  "mcpServers": {
+    "company-investigator": {
+      "command": "wsl.exe",
+      "args": ["-e", "bash", "-lc", "uvx company-investigator-mcp"]
+    }
+  }
+}
+```
+
+`bash -lc` is a non-interactive login shell: export the API keys in `~/.profile`,
+not `~/.bashrc` — Ubuntu's default `~/.bashrc` returns early for non-interactive
+shells, so anything exported there is silently ignored.
+
+## Tools
+
+| Tool | Purpose |
+|---|---|
+| `ping` | Health check |
+| `buscar_empresa(cnpj)` | Official registry data for one CNPJ |
+| `buscar_informacoes_publicas(url)` | Title and visible text of a public web page (needs Chromium) |
+| `investigar_empresa(identificador, profundidade=1)` | Full investigation; returns an `investigation_id` and an index |
+| `obter_indice_investigacao(investigation_id)` | The index again (also for any related company's id) |
+| `obter_secao_investigacao(investigation_id, secao, pagina=1, tamanho_pagina=20)` | One page (max 50 items) of a section |
+| Resource `investigation://{investigation_id}/{secao}{?pagina,tamanho_pagina}` | Same as the two tools above, as an MCP Resource (`index` returns the index) |
+
+Every tool self-describes its input schema, so the client discovers them via
+`tools/list`. Invalid input (bad CNPJ check digits, malformed URL, unknown
+section, page out of range, unknown or expired `investigation_id`) returns a
+readable tool error.
+
+### Examples
+
+`ping`:
+
+```jsonc
+// input
+{}
+// output
+{ "status": "ok", "message": "MCP funcionando" }
+```
+
+`buscar_empresa` — accepts the CNPJ with or without punctuation:
+
+```jsonc
+// input
+{ "cnpj": "19.131.243/0001-97" }
+// output
 {
   "cnpj": "19131243000197",
   "razao_social": "OPEN KNOWLEDGE BRASIL",
@@ -166,55 +236,60 @@ Input: { "cnpj": "19.131.243/0001-97" }
 }
 ```
 
-`investigar_empresa` runs the whole investigation, but answers with a small
-**index** — an `investigation_id` plus how many items each section holds
-(abbreviated; field names are exact, values illustrative):
+`buscar_informacoes_publicas`:
 
-```text
-Tool: investigar_empresa
-Input: { "identificador": "<CNPJ or company name>", "profundidade": 1 }
+```jsonc
+// input
+{ "url": "https://example.com/" }
+// output
+{ "url": "https://example.com/", "titulo": "Example Domain", "texto": "Example Domain This domain is for use in ..." }
 ```
 
-```json
+`investigar_empresa` — a CNPJ or a company name; `profundidade` is how many levels
+of the corporate network to expand (default 1, max 2). An ambiguous name returns
+`candidatos` instead of guessing. The answer is a small **index** (field names
+exact, values illustrative):
+
+```jsonc
+// input
+{ "identificador": "19.131.243/0001-97", "profundidade": 1 }
+// output
 {
   "investigation_id": "3f9c0d…",
-  "identificador_usado": "<the identifier you passed>",
+  "identificador_usado": "19.131.243/0001-97",
   "empresa": { "cnpj": "...", "razao_social": "...", "situacao": "ATIVA" },
   "processos_status": { "status": "realizada", "motivo": null },
   "secoes": [
     { "nome": "socios", "tipo": "lista", "total_itens": 4 },
-    { "nome": "noticias", "tipo": "lista", "total_itens": 20 },
+    { "nome": "noticias", "tipo": "lista", "total_itens": 45 },
     { "nome": "empresas_relacionadas", "tipo": "lista", "total_itens": 2 }
   ]
 }
 ```
 
-The content itself is read section by section (see the next section).
+`obter_secao_investigacao` — read the content page by page:
 
-## Reading a large investigation
+```jsonc
+// input
+{ "investigation_id": "3f9c0d…", "secao": "noticias", "pagina": 1, "tamanho_pagina": 20 }
+// output
+{
+  "secao": "noticias", "pagina": 1, "tamanho_pagina": 20,
+  "total_itens": 45, "total_paginas": 3,
+  "itens": [
+    { "titulo": "...", "url": "https://...", "fonte": "...", "resumo": "...",
+      "consultado_em": "...", "data_publicacao": null, "confianca": "media" }
+  ]
+}
+```
+
+### Reading a large investigation
 
 A real investigation with a corporate network can run past 100,000 characters —
 more than a single tool response should carry. So collection and delivery are
 separate: the server keeps the complete result in memory and the client pulls it
-in pages.
-
-| Access | What it returns |
-|---|---|
-| Tool `obter_indice_investigacao(investigation_id)` | The index again (also works for any related company's own id) |
-| Tool `obter_secao_investigacao(investigation_id, secao, pagina=1, tamanho_pagina=20)` | One page (max 50 items) of a section |
-| Resource `investigation://{investigation_id}/{secao}{?pagina,tamanho_pagina}` | The same, as an MCP Resource (`index` returns the index) |
-
-Both are exposed because not every MCP client wires up Resources; they share the
-same code path and return identical pages.
-
-```json
-{
-  "secao": "noticias", "pagina": 1, "tamanho_pagina": 20,
-  "total_itens": 45, "total_paginas": 3,
-  "itens": [ { "titulo": "...", "url": "https://...", "fonte": "serper",
-               "consultado_em": "...", "confianca": "media" } ]
-}
-```
+in pages. Paging through every section listed in the index returns 100% of what
+was collected.
 
 Sections: `empresa`, `candidatos`, `socios`, `pessoas_chave`, `linkedin`,
 `redes_sociais`, `noticias`, `contatos`, `processos_confirmados`,
@@ -225,34 +300,57 @@ Sections: `empresa`, `candidatos`, `socios`, `pessoas_chave`, `linkedin`,
 - **Related companies are references, not nested copies.** Each item of
   `empresas_relacionadas` holds the relationship (`origem_socio`, `fonte`,
   `confianca`) plus that company's own `investigation_id`; walk it recursively
-  with the same tools. A company reached through several paths appears once.
-- **Nothing is dropped.** No `[:N]` truncation anywhere; every page keeps its
-  source, URL, discovery date and confidence.
+  with the same tools. A company reached through several partners appears once,
+  with one `socio_de` edge per partner.
 - **A process's movements** (an old lawsuit can have thousands) live in
   `movimentos_processuais`, each item pointing back to its `numero_processo`;
   `processos_confirmados` only carries `total_movimentos`.
 - **Memory only, no database.** The store lives in the server process, is capped
-  (oldest whole investigation tree is discarded first) and disappears when the
-  server restarts. An unknown or expired `investigation_id` gets a clear error;
-  just run `investigar_empresa` again.
+  at 500 records (the least recently used whole investigation tree is discarded
+  first) and disappears when the server restarts. An unknown or expired
+  `investigation_id` gets a clear error; just run `investigar_empresa` again.
 
-## Investigation Graph
+## Sources and evidence
 
-Companies and people are nodes; how they connect is an explicit, typed,
-sourced edge — never an assumption:
+Every item preserves, when available: **source** (BrasilAPI, Serper, DataJud,
+Portal da Transparência, LinkedIn via search), **URL**, **discovery date**
+(`consultado_em`), **publication date**, **confidence** (`alta` / `media` /
+`baixa` — how strong the match is, never a claim of certainty) and, for possible
+family relationships, the **evidence** itself (a shared surname token, or the
+snippet that mentioned a relationship explicitly).
 
-```text
-Company A
-└── Partner X
-    ├── socio_de ────────► Company B  (found via public search, confirmed via BrasilAPI)
-    │                        └── relacionada_por_socio ─► Company A
-    └── socio_de ────────► Company C
-                             └── relacionada_por_socio ─► Company A
-```
+Judicial proceedings separate `processos_confirmados` (official DataJud data,
+retrieved by process number) from `processos_referencias` (a public mention, not
+confirmed). No official, public, CAPTCHA-free source allows searching processes by
+party (CNPJ/CPF/name), and DataJud never discloses parties — so confirming a
+process number is not the same as confirming who is involved in it.
 
-The same company reached through two different partners still appears **once**
-in `empresas_relacionadas` — with two separate `socio_de` edges pointing to it —
-never as two duplicate entities.
+## Limitations and responsible use
+
+This project:
+
+- uses only publicly available information;
+- never accesses private data;
+- never bypasses CAPTCHA, anti-bot mechanisms, authentication, paywalls or rate
+  limits;
+- never treats a matching name as proof of identity;
+- never treats a matching surname as proof of a family relationship — it is only
+  ever a *possible* relationship, with low confidence unless a public source
+  mentions an explicit kinship term;
+- never interprets appearing in a judicial process as guilt or wrongdoing;
+- treats PEP matches with explicit caution: a name match alone never becomes a
+  confirmed PEP — that requires the visible digits of the partner's masked CPF to
+  match the official record; otherwise the result is a possible homonym;
+- never fabricates a fact when a source cannot verify it — it reports the
+  limitation instead (`limitacoes`).
+
+Known limitations: search-based discovery depends on what the search provider
+indexes, so the corporate network and news coverage are not exhaustive; free API
+tiers have quotas; data is only as current as each public source.
+
+You are responsible for using the results lawfully, including under Brazil's
+LGPD (Lei Geral de Proteção de Dados) and each source's terms of use. Results are
+leads to verify, not conclusions.
 
 ## Architecture
 
@@ -265,8 +363,8 @@ MCP Tools        (interface/mcp_server/tools — validate input, call a use case
     ↓
 Use Cases        (application/use_cases — orchestrate a single MCP-level operation)
     ↓
-Services         (application/services — focused sub-orchestrators: identification,
-                  partner/company/news/social/LinkedIn/process/PEP/family-relationship search)
+Services         (application/services — identification, partner/company/news/social/
+                  LinkedIn/process/PEP/family-relationship search, investigation storage)
     ↓
 Ports            (domain/ports — small ABCs: one capability each)
     ↓
@@ -277,125 +375,50 @@ External Sources (BrasilAPI, Serper, DataJud, Portal da Transparência, Playwrig
 
 The dependency rule always points inward: `domain` depends on nothing external
 (not even Pydantic); `application` depends only on `domain` abstractions;
-`infrastructure` and `interface` depend on `domain` but never on each other.
-Every external capability sits behind a small port (Interface Segregation:
-`ProcessNumberLookupPort` only has `find_by_number` — there is deliberately no
-`find_by_cnpj` on it, because no CAPTCHA-free official source offers that).
-This is what makes it possible to swap Serper for another search provider by
-writing one new adapter class — no use case or service changes. The same applies
-to the in-memory investigation store: it sits behind `InvestigationStorePort`.
+`infrastructure` and `interface` depend on `domain`. Every external capability
+sits behind a small port, so swapping Serper for another search provider means
+writing one new adapter class. See [`CLAUDE.md`](https://github.com/CalebePrates/company-investigator-mcp/blob/main/CLAUDE.md) for the full
+rationale and how each tool's flow works end to end.
 
-TDD drives every behavior: a failing test is written first (`tests/unit` with
-fakes for every port, `tests/integration` exercising the real `MCPServer`
-composition), then the minimum code to pass it, then refactor with the suite
-green.
-
-## Why MCP?
-
-An LLM client needs to know what a tool does, what it takes and what it
-returns, without custom integration code per client. MCP standardizes exactly
-that: each tool here (`ping`, `buscar_empresa`, `buscar_informacoes_publicas`,
-`investigar_empresa`, `obter_indice_investigacao`, `obter_secao_investigacao`)
-self-describes its schema, so any MCP-compatible client can discover and call
-it directly — nothing in it is specific to one client. A plain REST API or a one-off scraper script
-would need bespoke glue for every consumer; an MCP server needs it once.
-
-## Sources and Evidence
-
-Every piece of information returned preserves, when available:
-
-- **source** — which system produced it (BrasilAPI, Serper, DataJud, Portal da
-  Transparência, LinkedIn via search).
-- **URL** — a link back to where it was found.
-- **discovery date** (`consultado_em`) — when this server queried it.
-- **publication date**, when the source provides one.
-- **confidence** (`alta` / `media` / `baixa`) — how strong the match is, never a
-  claim of certainty.
-- **evidence** — for possible family relationships, the actual signal (a shared
-  surname token, or the snippet that mentioned a relationship explicitly).
-
-Judicial proceedings specifically separate the `processos_confirmados` section
-(official DataJud data, retrieved by process number) from `processos_referencias`
-(a public mention, not yet confirmed) — because the official source never
-discloses parties, confirming a process number is not the same as confirming
-who is involved in it.
-
-## Limitations and responsible use
-
-This project:
-
-- uses only publicly available information;
-- never accesses private data;
-- never bypasses CAPTCHA, authentication, paywalls or rate limits;
-- never treats a matching name as proof of identity;
-- never treats a matching surname as proof of a family relationship;
-- never interprets appearing in a judicial process as guilt or wrongdoing;
-- treats PEP matches and homonyms with explicit caution (a name match alone
-  never becomes a confirmed PEP result);
-- never fabricates a fact when a source cannot verify it — it reports the
-  limitation instead.
+```text
+src/company_investigator/
+├── domain/             # entities, value objects (Cnpj), ports
+├── application/        # use cases and services
+├── infrastructure/     # BrasilAPI, Playwright, Serper, DataJud, Portal da Transparência,
+│                       # in-memory investigation store
+└── interface/mcp_server/
+    ├── server.py       # composition root
+    ├── tools/          # the six MCP tools
+    └── resources/      # investigation://{investigation_id}/{secao}
+npm/                    # npx launcher (Node, no dependencies, no server logic)
+```
 
 ## Development
 
 ```bash
-uv run pytest          # run the test suite
-uv run ruff check .    # lint
-uv run ruff format .   # format
+uv sync
+uv run pytest                 # test suite (no network, no browser, no paid API)
+uv run ruff check .           # lint
+uv run ruff format .          # format
+(cd npm && npm test)          # npm launcher tests
+uv build                      # sdist + wheel in dist/
 ```
 
-Tests are split into `tests/unit` (domain and application logic, isolated with
-fakes for every port — no network, no browser) and `tests/integration`
-(the real `MCPServer` composition, calling tools and reading resources in
-process, with external sources swapped for fakes via `build_server()`'s optional
-parameters). One integration test goes further: it launches the server as a real
-child process and talks to it over stdio with the official MCP client, the same
-path a desktop client uses.
+Every behavior is written test-first. `tests/unit` covers domain and application
+logic with fakes for every port; `tests/integration` exercises the real
+`MCPServer` composition, including one test that launches the server as a child
+process and talks to it over stdio with the official MCP client. CI runs all of
+this on every push and pull request.
 
-## Project structure
+Release process and versioning policy: [RELEASING.md](https://github.com/CalebePrates/company-investigator-mcp/blob/main/RELEASING.md). Changes:
+[CHANGELOG.md](https://github.com/CalebePrates/company-investigator-mcp/blob/main/CHANGELOG.md).
 
-```text
-src/company_investigator/
-├── domain/
-│   ├── entities/        # Company, Socio, investigation.py (the full result model)
-│   ├── value_objects/    # Cnpj (normalization + check-digit validation)
-│   └── ports/             # HealthCheckerPort, CompanyRepositoryPort, BrowserPort,
-│                           # SearchProviderPort, ProcessNumberLookupPort, PEPLookupPort,
-│                           # InvestigationStorePort
-├── application/
-│   ├── use_cases/        # PingUseCase, BuscarEmpresaUseCase,
-│   │                       # BuscarInformacoesPublicasUseCase, InvestigarEmpresaUseCase
-│   └── services/          # CompanyIdentificationService, PartnerSearchService,
-│                           # NewsSearchService, SocialMediaSearchService,
-│                           # LinkedInSearchService, ProcessSearchService,
-│                           # RelatedCompaniesService, RelatedPeopleService,
-│                           # FamilyRelationshipService, PEPService,
-│                           # InvestigationStorageService (index + paginated sections)
-├── infrastructure/       # BrasilApiCompanyRepository, PlaywrightBrowser,
-│                          # SerperSearchAdapter, DataJudProcessAdapter,
-│                          # PortalTransparenciaPEPAdapter, InMemoryInvestigationStore
-└── interface/mcp_server/
-    ├── server.py          # composition root
-    ├── tools/             # ping, buscar_empresa, buscar_informacoes_publicas,
-    │                       # investigar_empresa, obter_indice_investigacao,
-    │                       # obter_secao_investigacao
-    └── resources/         # investigation://{investigation_id}/{secao}
-```
-
-See [`CLAUDE.md`](CLAUDE.md) for the full architectural rationale and how each
-tool's flow works end to end.
-
-## Roadmap
-
-The project is feature-complete for its intended scope; nothing new is planned.
-Two things are deliberate non-goals:
+## Non-goals
 
 - **Persistence** (database, cache, history). The only state is the in-memory
   investigation store, which lives and dies with the server process.
-- **An LLM inside the server.** Analysis is the MCP client's / AI agent's job:
-  it chooses which tools to call, which sections to read in full, cross-checks
-  the evidence and writes the conclusion. The server's job is to hand it complete,
-  source-attributed data — every section retrievable, nothing summarized away.
+- **An LLM inside the server.** Analysis is the MCP client's / AI agent's job.
 
 ## License
 
-No license has been chosen for this project yet.
+[MIT](https://github.com/CalebePrates/company-investigator-mcp/blob/main/LICENSE) © Calebe Prates

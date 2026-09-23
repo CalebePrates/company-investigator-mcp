@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (Python version from .python-version)
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Tests
+        run: uv run pytest
+
+  npm-launcher:
+    name: npm launcher (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22"]
+        include:
+          - os: ubuntu-latest
+            node: "20"
+    defaults:
+      run:
+        working-directory: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Tests
+        run: npm test
+      - name: Pack (dry run)
+        run: npm pack --dry-run
+
+  package:
+    name: Build and smoke-test packages
+    runs-on: ubuntu-latest
+    needs: [python, npm-launcher]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Run the wheel through uvx
+        run: |
+          expected="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          actual="$(uvx --from "$(ls dist/*.whl)" company-investigator-mcp --version)"
+          test "$actual" = "$expected"
+      - name: Run the npm launcher against the local wheel (npx -> uvx -> Python)
+        run: |
+          expected="$(node -p 'require("./npm/package.json").version')"
+          actual="$(UV_FIND_LINKS=dist node npm/bin/company-investigator-mcp.js --version)"
+          test "$actual" = "$expected"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

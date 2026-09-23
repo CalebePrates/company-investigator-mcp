@@ -5,6 +5,7 @@ caminhos que nunca tocam a rede."""
 
 import json
 import sys
+from importlib.metadata import version
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -19,7 +20,8 @@ _SERVER = StdioServerParameters(
 @pytest.mark.asyncio
 async def test_external_client_can_discover_and_call_the_server_over_stdio() -> None:
     async with stdio_client(_SERVER) as (read, write), ClientSession(read, write) as session:
-        await session.initialize()
+        initialized = await session.initialize()
+        assert initialized.server_info.version == version("company-investigator-mcp")
 
         tools = {tool.name for tool in (await session.list_tools()).tools}
         assert tools == {

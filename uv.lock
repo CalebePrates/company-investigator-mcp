@@ -133,8 +133,8 @@ wheels = [
 ]
 
 [[package]]
-name = "company-investigator"
-version = "0.1.0"
+name = "company-investigator-mcp"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

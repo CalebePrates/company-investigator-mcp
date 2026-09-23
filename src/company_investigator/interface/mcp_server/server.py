@@ -73,6 +73,7 @@ from company_investigator.interface.mcp_server.tools.investigation_retrieval_too
     register_investigation_retrieval_tools,
 )
 from company_investigator.interface.mcp_server.tools.ping_tool import register_ping_tool
+from company_investigator.version import __version__
 
 _HTTP_TIMEOUT_SECONDS = 10.0
 
@@ -97,7 +98,7 @@ def build_server(
     DATAJUD_API_KEY/PORTAL_TRANSPARENCIA_API_KEY, a investigacao continua
     funcionando, so sem confirmacao oficial de processos/PEP.
     """
-    server = MCPServer("Company Investigator MCP")
+    server = MCPServer("Company Investigator MCP", version=__version__)
 
     health_checker = SimpleHealthChecker()
     ping_use_case = PingUseCase(health_checker=health_checker)

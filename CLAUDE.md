@@ -5,11 +5,13 @@ do básico até um projeto pessoal em produção, usando Clean Architecture + SO
 Hoje é um servidor de inteligência pública sobre empresas: dados cadastrais, rede
 societária, notícias, redes sociais, processos judiciais públicos e PEP.
 
-**Nota sobre nomes:** o rename técnico foi concluído — pacote Python
-(`src/company_investigator/`), nome em `pyproject.toml` (`company-investigator`,
-normalizado pelo `uv_build` para `company_investigator` por convenção, sem precisar de
-`[tool.uv.build-backend] module-name`), comando CLI (`uv run company-investigator`) e a
-chave do servidor em `.mcp.json` (`company-investigator`) usam todos o novo nome. O
+**Nota sobre nomes:** a distribuição publicada (PyPI e npm) se chama
+`company-investigator-mcp`; o pacote importável continua `company_investigator`
+(`src/company_investigator/`) — por isso o `pyproject.toml` declara
+`[tool.uv.build-backend] module-name = "company_investigator"` (sem isso o `uv_build`
+procuraria `company_investigator_mcp`). Comandos de console: `company-investigator-mcp`
+(principal, é o que o `uvx` executa) e `company-investigator` (alias mantido). A chave
+do servidor em `.mcp.json` é `company-investigator`. O
 repositório GitHub também já existe com o nome novo:
 [`CalebePrates/company-investigator-mcp`](https://github.com/CalebePrates/company-investigator-mcp).
 A única coisa que **não** foi renomeada é a pasta de desenvolvimento local dentro do
@@ -66,8 +68,29 @@ uv add --dev <pacote>     # adiciona dependência de desenvolvimento
 uv run pytest             # roda a suíte de testes
 uv run ruff check .       # lint
 uv run ruff format .      # formatação
-uv run company-investigator  # inicia o servidor MCP (stdio)
+uv run company-investigator-mcp            # inicia o servidor MCP (stdio)
+uv run company-investigator-mcp --version  # imprime a versão e sai
+(cd npm && npm test)                       # testes do launcher npm (node:test)
 ```
+
+## Distribuição (v1.0.0+)
+
+- **PyPI** `company-investigator-mcp` → `uvx company-investigator-mcp` /
+  `pip install company-investigator-mcp`.
+- **npm** `company-investigator-mcp` (pasta `npm/`) → `npx company-investigator-mcp`.
+  É **só um launcher** em Node puro, sem dependências: acha o `uvx` e executa
+  `uvx company-investigator-mcp@<versão do package.json>`, herdando stdio/env e
+  devolvendo o exit code. Nenhuma lógica do MCP mora lá, e nunca deve morar; o
+  launcher nunca escreve no stdout (é do protocolo MCP).
+- **Versão:** fonte única do lado Python é o `version` do `pyproject.toml`
+  (`company_investigator/version.py` lê dos metadados instalados; `--version` e o
+  `serverInfo.version` do MCP usam isso). O `npm/package.json` precisa ter o mesmo
+  número — `tests/unit/test_release_consistency.py` garante. npm X.Y.Z sempre roda
+  PyPI X.Y.Z (nunca `@latest`); publicar PyPI antes do npm. Passo a passo em
+  `RELEASING.md`.
+- **Chromium não é baixado na instalação** (decisão explícita: sem efeitos
+  colaterais/downloads grandes). `PlaywrightBrowser` detecta o binário ausente e
+  devolve um `BrowserError` com o comando exato para instalar.
 
 ## Arquitetura
 
@@ -184,7 +207,8 @@ Fluxo: `ping_tool.py` → `PingUseCase` → `HealthCheckerPort` → `SimpleHealt
 
 Recebe um CNPJ (com ou sem pontuação), normaliza e valida (incluindo os dígitos
 verificadores — ver `domain/value_objects/cnpj.py`), e retorna dados cadastrais reais
-via BrasilAPI: razão social, nome fantasia, situação cadastral, endereço e sócios (QSA).
+via BrasilAPI: CNPJ, razão social, nome fantasia e situação cadastral (os sócios/QSA
+aparecem na seção `socios` de `investigar_empresa`).
 Fluxo: `buscar_empresa_tool.py` → `BuscarEmpresaUseCase` → `CompanyRepositoryPort` →
 `BrasilApiCompanyRepository`.
 
@@ -310,7 +334,7 @@ processos ficam com resultado vazio + motivo explicado, em vez de falhar.
 | `PORTAL_TRANSPARENCIA_API_KEY` | API de Dados do Portal da Transparência (CGU) | Cadastro gratuito por e-mail em portaldatransparencia.gov.br/api-de-dados/cadastrar-email |
 
 **Importante (específico deste projeto):** o servidor é lançado via `.mcp.json` como
-`wsl.exe -e bash -lc "... uv run company-investigator"`. Esse `bash -lc` é um shell de login
+`wsl.exe -e bash -lc "... uv run company-investigator"` (alias ainda válido). Esse `bash -lc` é um shell de login
 **não-interativo**, e o `~/.bashrc` padrão do Ubuntu tem uma guarda que sai fora antes de
 rodar qualquer `export` quando o shell não é interativo — variáveis exportadas lá **não**
 chegam ao processo do servidor. Configure as variáveis em `~/.profile` (sem essa guarda),

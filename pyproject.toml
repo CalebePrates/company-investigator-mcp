@@ -1,10 +1,35 @@
 [project]
-name = "company-investigator"
-version = "0.1.0"
+name = "company-investigator-mcp"
+version = "1.0.0"
 description = "Company Investigator MCP - MCP server for public company intelligence, corporate relationships and evidence-based investigation"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Calebe Prates", email = "eltoncalebeprates@gmail.com" }
+]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "osint",
+    "cnpj",
+    "brazil",
+    "company-intelligence",
+    "due-diligence",
+    "pep",
+    "datajud",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Legal Industry",
+    "Natural Language :: Portuguese (Brazilian)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.14"
 dependencies = [
@@ -16,12 +41,25 @@ dependencies = [
     "pydantic>=2.13.5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/CalebePrates/company-investigator-mcp"
+Repository = "https://github.com/CalebePrates/company-investigator-mcp"
+Issues = "https://github.com/CalebePrates/company-investigator-mcp/issues"
+Documentation = "https://github.com/CalebePrates/company-investigator-mcp#readme"
+Changelog = "https://github.com/CalebePrates/company-investigator-mcp/blob/main/CHANGELOG.md"
+
 [project.scripts]
+company-investigator-mcp = "company_investigator:main"
 company-investigator = "company_investigator:main"
 
 [build-system]
 requires = ["uv_build>=0.12.18,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# A distribuicao se chama `company-investigator-mcp`, mas o pacote importavel
+# continua sendo `company_investigator` (o uv_build inferiria `company_investigator_mcp`).
+module-name = "company_investigator"
 
 [dependency-groups]
 dev = [

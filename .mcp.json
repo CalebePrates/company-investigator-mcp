@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "mcp-project": {
+      "command": "wsl.exe",
+      "args": [
+        "-e",
+        "bash",
+        "-lc",
+        "cd /home/elton/pessoal/mcp-project && uv run mcp-project"
+      ]
+    }
+  }
+}

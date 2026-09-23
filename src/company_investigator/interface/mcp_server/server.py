@@ -10,6 +10,9 @@ from company_investigator.application.services.company_identification_service im
 from company_investigator.application.services.family_relationship_service import (
     FamilyRelationshipService,
 )
+from company_investigator.application.services.investigation_storage_service import (
+    InvestigationStorageService,
+)
 from company_investigator.application.services.linkedin_search_service import LinkedInSearchService
 from company_investigator.application.services.news_search_service import NewsSearchService
 from company_investigator.application.services.partner_search_service import PartnerSearchService
@@ -32,6 +35,7 @@ from company_investigator.application.use_cases.investigar_empresa_use_case impo
 from company_investigator.application.use_cases.ping_use_case import PingUseCase
 from company_investigator.domain.ports.browser import BrowserPort
 from company_investigator.domain.ports.company_repository import CompanyRepositoryPort
+from company_investigator.domain.ports.investigation_store import InvestigationStorePort
 from company_investigator.domain.ports.pep_lookup import PEPLookupPort
 from company_investigator.domain.ports.process_lookup import ProcessNumberLookupPort
 from company_investigator.domain.ports.search_provider import SearchProviderPort
@@ -40,6 +44,9 @@ from company_investigator.infrastructure.company.http.brasilapi_company_reposito
     BrasilApiCompanyRepository,
 )
 from company_investigator.infrastructure.health.simple_health_checker import SimpleHealthChecker
+from company_investigator.infrastructure.investigation.in_memory_investigation_store import (
+    InMemoryInvestigationStore,
+)
 from company_investigator.infrastructure.pep.portal_transparencia_pep_adapter import (
     PortalTransparenciaPEPAdapter,
 )
@@ -50,6 +57,9 @@ from company_investigator.infrastructure.search.serper_search_adapter import Ser
 from company_investigator.infrastructure.search.unconfigured_search_provider import (
     UnconfiguredSearchProvider,
 )
+from company_investigator.interface.mcp_server.resources.investigation_resource import (
+    register_investigation_resource,
+)
 from company_investigator.interface.mcp_server.tools.buscar_empresa_tool import (
     register_buscar_empresa_tool,
 )
@@ -58,6 +68,9 @@ from company_investigator.interface.mcp_server.tools.buscar_informacoes_publicas
 )
 from company_investigator.interface.mcp_server.tools.investigar_empresa_tool import (
     register_investigar_empresa_tool,
+)
+from company_investigator.interface.mcp_server.tools.investigation_retrieval_tool import (
+    register_investigation_retrieval_tools,
 )
 from company_investigator.interface.mcp_server.tools.ping_tool import register_ping_tool
 
@@ -71,16 +84,18 @@ def build_server(
     search_provider: SearchProviderPort | None = None,
     process_number_lookup: ProcessNumberLookupPort | None = None,
     pep_lookup: PEPLookupPort | None = None,
+    investigation_store: InvestigationStorePort | None = None,
 ) -> MCPServer:
     """Composition root: monta o MCPServer e injeta as dependencias concretas.
 
-    `company_repository`, `browser`, `search_provider`, `process_number_lookup` e
-    `pep_lookup` existem para permitir que testes substituam as fontes reais
-    (BrasilAPI, Playwright, Serper, DataJud, Portal da Transparencia) por fakes,
-    sem tocar a rede, abrir um navegador ou gastar cota de uma API paga.
-    `process_number_lookup`/`pep_lookup` tambem podem ficar `None` de proposito em
-    producao: sem DATAJUD_API_KEY/PORTAL_TRANSPARENCIA_API_KEY, a investigacao
-    continua funcionando, so sem confirmacao oficial de processos/PEP.
+    `company_repository`, `browser`, `search_provider`, `process_number_lookup`,
+    `pep_lookup` e `investigation_store` existem para permitir que testes
+    substituam as fontes reais (BrasilAPI, Playwright, Serper, DataJud, Portal da
+    Transparencia, o armazenamento em memoria) por fakes, sem tocar a rede, abrir
+    um navegador ou gastar cota de uma API paga. `process_number_lookup`/
+    `pep_lookup` tambem podem ficar `None` de proposito em producao: sem
+    DATAJUD_API_KEY/PORTAL_TRANSPARENCIA_API_KEY, a investigacao continua
+    funcionando, so sem confirmacao oficial de processos/PEP.
     """
     server = MCPServer("Company Investigator MCP")
 
@@ -122,7 +137,12 @@ def build_server(
         family_relationship_service=FamilyRelationshipService(search_provider=search),
         pep_service=PEPService(pep_lookup=pep),
     )
-    register_investigar_empresa_tool(server, investigar_empresa_use_case)
+
+    store = investigation_store or InMemoryInvestigationStore()
+    storage_service = InvestigationStorageService(store=store)
+    register_investigar_empresa_tool(server, investigar_empresa_use_case, storage_service)
+    register_investigation_retrieval_tools(server, storage_service)
+    register_investigation_resource(server, storage_service)
 
     return server
 

@@ -49,6 +49,15 @@ def _server(companies: dict[str, Company], search_results: list[SearchResult] | 
     )
 
 
+async def _secao(server, investigation_id: str, secao: str, **kwargs) -> dict:
+    result = await server.call_tool(
+        "obter_secao_investigacao",
+        {"investigation_id": investigation_id, "secao": secao, **kwargs},
+    )
+    assert result.is_error is False
+    return result.structured_content
+
+
 @pytest.mark.asyncio
 async def test_tool_is_registered_on_the_server() -> None:
     server = _server({})
@@ -69,22 +78,78 @@ async def test_tool_documents_the_identificador_parameter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_returns_structured_investigation_for_a_cnpj() -> None:
+async def test_tool_returns_an_index_not_the_full_investigation() -> None:
     server = _server({"11444777000161": _EMPRESA_EXEMPLO})
 
     result = await server.call_tool("investigar_empresa", {"identificador": "11.444.777/0001-61"})
 
     assert result.is_error is False
     content = result.structured_content
+    assert "investigation_id" in content
     assert content["empresa"]["cnpj"] == "11444777000161"
-    assert content["socios"] == [
+    assert content["processos_status"]["status"] == "nao_confirmada"
+    nomes_secoes = {s["nome"] for s in content["secoes"]}
+    assert "socios" in nomes_secoes
+    assert "noticias" in nomes_secoes
+    # a secao em si nao vem inline no indice - so a contagem
+    socios_resumo = next(s for s in content["secoes"] if s["nome"] == "socios")
+    assert socios_resumo["total_itens"] == 1
+
+
+@pytest.mark.asyncio
+async def test_socios_section_can_be_retrieved_in_full() -> None:
+    server = _server({"11444777000161": _EMPRESA_EXEMPLO})
+    indice = (
+        await server.call_tool("investigar_empresa", {"identificador": "11.444.777/0001-61"})
+    ).structured_content
+
+    pagina = await _secao(server, indice["investigation_id"], "socios")
+
+    assert pagina["itens"] == [
         {"nome": "Joana Silva", "qualificacao": "Socia-Administradora", "documento": None}
     ]
-    assert content["candidatos"] == []
-    assert "linkedin" in content
-    assert "pessoas_chave" in content["linkedin"]
-    assert set(content["processos"].keys()) == {"confirmados", "referencias", "status", "motivo"}
-    assert content["processos"]["status"] == "nao_confirmada"
+    assert pagina["total_itens"] == 1
+    assert pagina["total_paginas"] == 1
+
+
+@pytest.mark.asyncio
+async def test_obter_indice_investigacao_re_fetches_the_index() -> None:
+    server = _server({"11444777000161": _EMPRESA_EXEMPLO})
+    indice = (
+        await server.call_tool("investigar_empresa", {"identificador": "11.444.777/0001-61"})
+    ).structured_content
+
+    result = await server.call_tool(
+        "obter_indice_investigacao", {"investigation_id": indice["investigation_id"]}
+    )
+
+    assert result.is_error is False
+    assert result.structured_content["investigation_id"] == indice["investigation_id"]
+
+
+@pytest.mark.asyncio
+async def test_obter_secao_investigacao_raises_for_unknown_investigation_id() -> None:
+    server = _server({})
+
+    with pytest.raises(ToolError):
+        await server.call_tool(
+            "obter_secao_investigacao",
+            {"investigation_id": "does-not-exist", "secao": "socios"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_obter_secao_investigacao_raises_for_unknown_section() -> None:
+    server = _server({"11444777000161": _EMPRESA_EXEMPLO})
+    indice = (
+        await server.call_tool("investigar_empresa", {"identificador": "11.444.777/0001-61"})
+    ).structured_content
+
+    with pytest.raises(ToolError):
+        await server.call_tool(
+            "obter_secao_investigacao",
+            {"investigation_id": indice["investigation_id"], "secao": "nao_existe"},
+        )
 
 
 @pytest.mark.asyncio
@@ -134,8 +199,14 @@ async def test_tool_returns_candidates_for_an_ambiguous_name() -> None:
     assert result.is_error is False
     content = result.structured_content
     assert content["empresa"] is None
-    assert len(content["candidatos"]) == 2
-    assert content["limitacoes"]
+    candidatos_resumo = next(s for s in content["secoes"] if s["nome"] == "candidatos")
+    assert candidatos_resumo["total_itens"] == 2
+
+    pagina = await _secao(server, content["investigation_id"], "candidatos")
+    assert len(pagina["itens"]) == 2
+
+    limitacoes_resumo = next(s for s in content["secoes"] if s["nome"] == "limitacoes")
+    assert limitacoes_resumo["total_itens"] >= 1
 
 
 @pytest.mark.asyncio
@@ -157,8 +228,10 @@ async def test_tool_still_succeeds_with_limitations_when_search_provider_is_not_
     assert result.is_error is False
     content = result.structured_content
     assert content["empresa"]["cnpj"] == "11444777000161"
-    assert content["noticias"] == []
-    assert content["limitacoes"]
+    noticias_resumo = next(s for s in content["secoes"] if s["nome"] == "noticias")
+    assert noticias_resumo["total_itens"] == 0
+    limitacoes_resumo = next(s for s in content["secoes"] if s["nome"] == "limitacoes")
+    assert limitacoes_resumo["total_itens"] >= 1
 
 
 class FakeProcessNumberLookup(ProcessNumberLookupPort):
@@ -203,10 +276,12 @@ async def test_tool_confirms_a_process_via_datajud_when_a_number_is_found() -> N
     result = await server.call_tool("investigar_empresa", {"identificador": "11.444.777/0001-61"})
 
     assert result.is_error is False
-    processos = result.structured_content["processos"]
-    assert processos["status"] == "realizada"
-    assert len(processos["confirmados"]) == 1
-    confirmado = processos["confirmados"][0]
+    content = result.structured_content
+    assert content["processos_status"]["status"] == "realizada"
+
+    pagina = await _secao(server, content["investigation_id"], "processos_confirmados")
+    assert len(pagina["itens"]) == 1
+    confirmado = pagina["itens"][0]
     assert confirmado["dados"]["numero_processo"] == "00012345620208260100"
     assert confirmado["dados"]["tribunal"] == "TJSP"
     assert confirmado["relacionado_a"] == "Empresa Exemplo"
@@ -246,11 +321,26 @@ async def test_tool_expands_related_companies_by_default() -> None:
 
     assert result.is_error is False
     content = result.structured_content
-    assert len(content["empresas_relacionadas"]) == 1
-    relacionada = content["empresas_relacionadas"][0]
+    relacionadas_resumo = next(s for s in content["secoes"] if s["nome"] == "empresas_relacionadas")
+    assert relacionadas_resumo["total_itens"] == 1
+
+    pagina_relacionadas = await _secao(server, content["investigation_id"], "empresas_relacionadas")
+    relacionada = pagina_relacionadas["itens"][0]
     assert relacionada["empresa"]["cnpj"] == "11222333000181"
-    assert relacionada["investigacao"]["empresas_relacionadas"] == []
-    assert any(r["tipo_relacionamento"] == "socio_de" for r in content["relacionamentos"])
+    assert relacionada["investigation_id"] != content["investigation_id"]
+
+    # a sub-investigacao da empresa relacionada e acessivel pelo proprio id,
+    # e ela nao expandiu mais um nivel de rede (profundidade padrao 1)
+    sub_indice = (
+        await server.call_tool(
+            "obter_indice_investigacao", {"investigation_id": relacionada["investigation_id"]}
+        )
+    ).structured_content
+    sub_relacionadas = next(s for s in sub_indice["secoes"] if s["nome"] == "empresas_relacionadas")
+    assert sub_relacionadas["total_itens"] == 0
+
+    pagina_relacionamentos = await _secao(server, content["investigation_id"], "relacionamentos")
+    assert any(r["tipo_relacionamento"] == "socio_de" for r in pagina_relacionamentos["itens"])
 
 
 @pytest.mark.asyncio
@@ -280,7 +370,10 @@ async def test_tool_does_not_expand_network_when_profundidade_is_zero() -> None:
     )
 
     assert result.is_error is False
-    assert result.structured_content["empresas_relacionadas"] == []
+    relacionadas_resumo = next(
+        s for s in result.structured_content["secoes"] if s["nome"] == "empresas_relacionadas"
+    )
+    assert relacionadas_resumo["total_itens"] == 0
 
 
 @pytest.mark.asyncio
@@ -334,7 +427,8 @@ async def test_tool_confirms_pep_when_document_matches() -> None:
     result = await server.call_tool("investigar_empresa", {"identificador": "11.444.777/0001-61"})
 
     assert result.is_error is False
-    peps = result.structured_content["peps"]
+    pagina = await _secao(server, result.structured_content["investigation_id"], "peps")
+    peps = pagina["itens"]
     assert len(peps) == 1
     assert peps[0]["status"] == "PEP_CONFIRMADA"
     assert peps[0]["funcao"] == "Ministro"
